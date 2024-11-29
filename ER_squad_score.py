@@ -1,7 +1,8 @@
 import random
 import requests
 import pprint
-
+import time
+import json
 # API Key and Base URL configuration
 API_KEY = "LeG377Fnji3o0uCQqF5Ue5EaAGRnN6vM9hJWCcOq"
 BASE_URL = "https://open-api.bser.io/v1"
@@ -10,10 +11,10 @@ HEADERS = {"x-api-key": API_KEY}
 
 def get_users_in_tier():
     """
-    특정 티어의 유저 ID 목록을 가져옵니다.
+    특정 티어(in 1000)의 유저 ID 목록을 가져옵니다.
     - 현재 시즌, 스쿼드 모드 (mode=3)에서 티어에 해당하는 유저를 필터링.
     """
-    url = f"{BASE_URL}/rank/top/27/3"  # 시즌 1, 스쿼드 모드
+    url = f"{BASE_URL}/rank/top/27/3"  
     response = requests.get(url, headers=HEADERS)
     response.raise_for_status()
     data = response.json()
@@ -29,7 +30,6 @@ def get_random_user_id():
     """
     users = get_users_in_tier()
     if not users:
-        print(f"티어 {tier_name}에 해당하는 유저가 없습니다.")
         return None
     return random.choice(users)
 
@@ -55,67 +55,88 @@ def get_match_records(user_num, next=None):
     return data
 
 
-def extract_team_rank_and_kills_with_combinations(match_records):
+def calculate_team_scores(match_record):
     """
-    유저 전적 데이터를 기반으로 캐릭터 조합별 등수와 킬 수를 누적 저장합니다.
-    - 같은 캐릭터 조합이라면 다른 팀이라도 데이터를 누적합니다.
+    단일 게임 데이터에서 팀별 캐릭터 조합의 점수를 계산하고 저장합니다.
+    - 각 조합별로 등수 점수와 킬 점수를 반영합니다.
     """
+    # 점수 기준 (등수에 따른 점수)
+    rank_points = {1: 10, 2: 7, 3: 5, 4: 2, 5: 1,6: 0, 7: 0, 8: 0}
     combination_data = {}
-    for match in match_records.get("games", []):
-        # 게임 데이터에서 팀별로 그룹화
-        team_data = {}
-        for player in match["players"]:
-            team_id = player["teamId"]
-            character_name = player["characterName"]
-            rank = player["rank"]
-            kills = player["teamKill"]
 
-            # 팀별로 캐릭터 조합 구성
-            if team_id not in team_data:
-                team_data[team_id] = {"rank": rank, "kills": kills, "characters": []}
+    # 각 팀의 데이터를 처리
+    
+    for player in match_record["userGames"]:
+        team_id = player["teamNumber"]
+        character_name = player["characterNum"]
+        rank = player["gameRank"]
+        kills = player["teamKill"]
 
-            team_data[team_id]["characters"].append(character_name)
+        # 팀별로 캐릭터 조합 구성
+        if team_id not in combination_data:
+            combination_data[team_id] = {
+                "rank": rank,
+                "kills": kills,
+                "characters": []
+            }
+        
+        combination_data[team_id]["characters"].append(character_name)
 
-        # 조합별로 데이터 저장
-        for team in team_data.values():
-            characters = tuple(sorted(team["characters"]))  # 캐릭터 이름 정렬
-            rank = team["rank"]
-            kills = team["kills"]
+    # 조합별 점수 계산;
+    team_scores = {}
+    for team in combination_data.values():
+        # 캐릭터 조합 정렬
+        characters = tuple(sorted(team["characters"]))
+        rank = team["rank"]
+        kills = team["kills"]
 
-            # 조합 데이터 초기화 또는 업데이트
-            if characters not in combination_data:
-                combination_data[characters] = {"rank_sum": 0, "count": 0, "kills_sum": 0}
+        # 조합 점수 계산
+        score = rank_points.get(rank, 0) + kills
 
-            combination_data[characters]["rank_sum"] += rank
-            combination_data[characters]["count"] += 1
-            combination_data[characters]["kills_sum"] += kills
+        # 조합 점수 반영
+        if characters not in team_scores:
+            team_scores[characters] = {"total_score": 0, "count": 0}
 
-    return combination_data
+        team_scores[characters]["total_score"] += score
+        team_scores[characters]["count"] += 1
+
+    return team_scores
+
+def GetUserStats(userNum, seasonId=27):
+    response_userStats = requests.get(f"{BASE_URL}v1/user/stats/{userNum}/{seasonId}", headers=HEADERS)
+    return response_userStats.json()
 
 
+def GetGameDetail(gameid):
+    response_gamedetail = requests.get(f"{BASE_URL}v1/games/{gameid}",headers=HEADERS)
+    return response_gamedetail.json()
+
+
+def ExportJson(js, fileName="temp",printjs=False):
+    file_path= f"{fileName}.json"
+    if printjs:pprint(js)
+    file = open(file_path,"w")
+    file.write(json.dumps(js, indent="\t"))
+    print(file_path)
+    time.sleep(1)
+    
+    
+    
 def main():
     # Step 1: Get a random user ID
     random_user_id = get_random_user_id()
     if not random_user_id:
         return
-    
+
     print(f"랜덤 유저 ID: {random_user_id}")
-
-    # Step 2: Get match records for the selected user
+    
+ 
+    
     match_records = get_match_records(random_user_id)
-    #if not match_records.get("games"):
-        #print("해당 유저의 전적 기록이 없습니다.")
-       #return
+    a=calculate_team_scores(match_records)
+    pprint.pprint(a)
 
-    # Step 3: Extract combination data
-    combination_data = extract_team_rank_and_kills_with_combinations(match_records)
 
-    # Step 4: Output results
-    print("캐릭터 조합 데이터 (등수와 킬 수):")
-    for characters, data in combination_data.items():
-        avg_rank = data["rank_sum"] / data["count"]
-        avg_kills = data["kills_sum"] / data["count"]
-        print(f"조합: {characters}, 평균 등수: {avg_rank:.2f}, 평균 킬: {avg_kills:.2f}")
 
 
 if __name__ == "__main__":
