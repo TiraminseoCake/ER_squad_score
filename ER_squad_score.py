@@ -2,6 +2,8 @@ import random
 import requests
 import pprint
 import time
+import csv
+import os
 
 # API Key and Base URL configuration
 API_KEY = "LeG377Fnji3o0uCQqF5Ue5EaAGRnN6vM9hJWCcOq"
@@ -31,10 +33,18 @@ def get_recent_matches(user_num):
     data = response.json()
     return data["userGames"][:10]  # 최대 10개 전적 반환
 
+processed_game_ids = set()  # 이미 처리된 게임 ID를 추적
+
 def get_game_detail(gameid):
     """
-    게임 세부 정보 가져오기.
+    게임 세부 정보 가져오기. 이미 처리된 게임 ID는 무시.
     """
+    global processed_game_ids
+
+    if gameid in processed_game_ids:
+        print(f"게임 {gameid}은 이미 처리되었습니다. 건너뜁니다.")
+        return None  # 이미 처리된 게임은 무시
+
     url = f"{BASE_URL}/games/{gameid}"
     delay = 1
     while True:
@@ -45,8 +55,12 @@ def get_game_detail(gameid):
             delay = min(delay * 2, 10)
             continue
         response.raise_for_status()
-        return response.json()
 
+        # 처리 완료된 게임 ID를 추가
+        processed_game_ids.add(gameid)
+        return response.json()
+    
+    
 def calculate_team_scores(match_record):
     """
     게임 데이터에서 팀별 캐릭터 조합 점수 계산.
@@ -102,8 +116,32 @@ def get_user_num(nickName: str):
     response.raise_for_status()
     return response.json()["user"]["userNum"]
 
+def save_to_csv_on_desktop(filename):
+    """
+    global_combination_data를 바탕화면에 CSV 파일로 저장.
+    """
+    global global_combination_data
+
+    # 사용자 바탕화면 경로 가져오기
+    desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+    full_path = os.path.join(desktop_path, filename)
+
+    # CSV 파일 열기
+    with open(full_path, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+
+        # 헤더 작성
+        writer.writerow(["Combination", "Scores", "Count"])
+
+        # 데이터 작성
+        for characters, data in global_combination_data.items():
+            writer.writerow([characters, data["scores"], len(data["scores"])])
+
+    print(f"데이터가 바탕화면에 {filename} 파일로 저장되었습니다.")
+    
 def main():
     global global_combination_data
+    global processed_game_ids
 
     # 첫 번째 유저의 닉네임 입력
     first_nickName = input("첫 번째 유저 닉네임을 입력하세요: ")
@@ -118,17 +156,18 @@ def main():
     if not first_matches:
         print("첫 번째 유저의 전적을 가져올 수 없습니다.")
         return
+
     first_match = first_matches[0]  # 첫 번째 전적
     game_data = get_game_detail(first_match["gameId"])
-    team_scores = calculate_team_scores(game_data)
-    update_global_combination_data(team_scores)
+    if game_data:  # 유효한 게임 데이터만 처리
+        team_scores = calculate_team_scores(game_data)
+        update_global_combination_data(team_scores)
 
     # 반복적으로 티어 내 유저 선택 및 전적 처리
     iterations = 2000
     users_in_tier = get_users_in_tier()
     for _ in range(iterations):
         try:
-            # 티어 내 유저 랜덤 선택
             random_user = random.choice(users_in_tier)
             matches = get_recent_matches(random_user)
 
@@ -136,11 +175,13 @@ def main():
                 print(f"유저 {random_user}의 전적이 없습니다. 다음 유저를 선택합니다.")
                 continue
 
-            # 최근 전적 10개 중 랜덤 선택
+            # 최근 전적 중 랜덤하게 선택
             random_match = random.choice(matches)
             game_data = get_game_detail(random_match["gameId"])
-            team_scores = calculate_team_scores(game_data)
-            update_global_combination_data(team_scores)
+
+            if game_data:  # 유효한 게임 데이터만 처리
+                team_scores = calculate_team_scores(game_data)
+                update_global_combination_data(team_scores)
 
             print(f"유저 {random_user}의 전적 처리 완료.")
 
@@ -153,6 +194,7 @@ def main():
     # 최종 글로벌 데이터 출력
     print("글로벌 조합 점수 데이터:")
     pprint.pprint(global_combination_data)
-
+    save_to_csv_on_desktop("global_combination_data.csv")
+    
 if __name__ == "__main__":
     main()
